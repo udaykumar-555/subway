@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Subway Surfers JS Clone</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #87CEEB;
+            /* Sky blue */
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+            pointer-events: none;
+        }
+
+        #score {
+            font-size: 32px;
+            font-weight: 800;
+        }
+
+        #instructions {
+            margin-top: 10px;
+            font-size: 16px;
+            opacity: 0.8;
+        }
+
+        #game-over {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 40px;
+            border-radius: 12px;
+            text-align: center;
+            display: none;
+        }
+
+        #game-over h1 {
+            margin: 0 0 20px 0;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 18px;
+            background: #aa3bff;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #c084fc;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="ui-layer">
+        <div id="score">Score: 0</div>
+        <div id="coin-score" style="color: #ffd700; font-weight: bold; font-size: 24px; margin-top: 5px;">Coins: 0</div>
+        <div id="jetpack-ui"
+            style="display: none; color: #00ffff; font-weight: bold; font-size: 24px; margin-top: 5px;">Jetpack: 60s
+        </div>
+        <div id="instructions">Controls: Left/Right Arrows to switch lanes. Up Arrow to Jump.</div>
+    </div>
+    <div id="game-over">
+        <h1>Game Over!</h1>
+        <h2 id="final-score">Score: 0</h2>
+        <button onclick="location.reload()">Play Again</button>
+    </div>
+
+    <!-- Load Three.js from CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // --- SCENE SETUP ---
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x87CEEB, 0.03); // Creates a fade-in effect in the distance
+
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(0, 5, 12);
+        camera.lookAt(0, 0, -10);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.body.appendChild(renderer.domElement);
+
+        // --- LIGHTING ---
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(-10, 20, 10);
+        dirLight.castShadow = true;
+        scene.add(dirLight);
+
+        // --- ENVIRONMENT ---
+        // The Ground
+        const groundGeo = new THREE.PlaneGeometry(40, 200);
+        const groundMat = new THREE.MeshStandardMaterial({ color: 0x444444 });
+        const ground = new THREE.Mesh(groundGeo, groundMat);
+        ground.rotation.x = -Math.PI / 2;
+        ground.position.z = -50;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        // --- RAILWAY TRACKS ---
+        const railMat = new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.8 });
+        const railGeo = new THREE.BoxGeometry(0.2, 0.1, 200);
+        const sleepers = [];
+        const sleeperGeo = new THREE.BoxGeometry(2.6, 0.1, 0.4);
+        const sleeperMat = new THREE.MeshStandardMaterial({ color: 0x4a3c31 });
+
+        [-3, 0, 3].forEach(laneX => {
+            // Stationary Rails
+            const railL = new THREE.Mesh(railGeo, railMat); railL.position.set(laneX - 0.8, 0.05, -50); scene.add(railL);
+            const railR = new THREE.Mesh(railGeo, railMat); railR.position.set(laneX + 0.8, 0.05, -50); scene.add(railR);
+            // Moving Sleepers (Wooden Planks)
+            for (let i = 0; i < 40; i++) {
+                const sleeper = new THREE.Mesh(sleeperGeo, sleeperMat);
+                sleeper.position.set(laneX, 0.02, -i * 3);
+                scene.add(sleeper);
+                sleepers.push(sleeper);
+            }
+        });
+
+        // --- PLAYER ---
+        const player = new THREE.Group();
+        player.position.y = 0; // Base level is now 0, aligning feet with the ground
+
+        // Materials for the child character
+        const skinMat = new THREE.MeshStandardMaterial({ color: 0xffccaa, roughness: 0.6 });
+        const shirtMat = new THREE.MeshStandardMaterial({ color: 0x3366ff, roughness: 0.7 });
+        const pantsMat = new THREE.MeshStandardMaterial({ color: 0x444444, roughness: 0.8 });
+        const shoeMat = new THREE.MeshStandardMaterial({ color: 0xff3333, roughness: 0.5 });
+
+        // Head & Cap (Rounded)
+        const headGroup = new THREE.Group();
+        headGroup.position.y = 1.65;
+        const headMesh = new THREE.Mesh(new THREE.SphereGeometry(0.22, 32, 32), skinMat);
+        headMesh.castShadow = true;
+        headGroup.add(headMesh);
+
+        const capMesh = new THREE.Mesh(new THREE.SphereGeometry(0.23, 32, 32, 0, Math.PI * 2, 0, Math.PI / 2.1), shoeMat);
+        capMesh.position.y = 0.02;
+        capMesh.castShadow = true;
+        headGroup.add(capMesh);
+
+        // Visor - Scaled sphere for a curved brim
+        const visorMesh = new THREE.Mesh(new THREE.SphereGeometry(0.15, 16, 16), shoeMat);
+        visorMesh.scale.set(1.4, 0.2, 1.2);
+        visorMesh.position.set(0, 0.08, 0.15);
+        visorMesh.castShadow = true;
+        headGroup.add(visorMesh);
+        player.add(headGroup);
+
+        // Body (Rounded Capsule-like structure)
+        const bodyGeo = new THREE.SphereGeometry(0.25, 32, 32);
+        const body = new THREE.Mesh(bodyGeo, shirtMat);
+        body.scale.set(1, 1.4, 0.8);
+        body.position.y = 1.1;
+        body.castShadow = true;
+        player.add(body);
+
+        // Helper to create pivot-based limbs for animation
+        function createLimb(radius, height, mat, yPivot) {
+            const pivot = new THREE.Group();
+            pivot.position.y = yPivot;
+            const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius * 0.8, height, 16), mat);
+            mesh.position.y = -height / 2; // Shift so pivot rotates from the top
+            mesh.castShadow = true;
+            pivot.add(mesh);
+
+            // Spherical joint for smooth shoulders/hips
+            const joint = new THREE.Mesh(new THREE.SphereGeometry(radius, 16, 16), mat);
+            pivot.add(joint);
+
+            return pivot;
+        }
+
+        // Arms (pivoting at shoulders)
+        const leftArm = createLimb(0.08, 0.45, skinMat, 1.4);
+        leftArm.position.x = -0.32;
+        player.add(leftArm);
+
+        const rightArm = createLimb(0.08, 0.45, skinMat, 1.4);
+        rightArm.position.x = 0.32;
+        player.add(rightArm);
+
+        // Legs (pivoting at hips)
+        const leftLeg = createLimb(0.1, 0.55, pantsMat, 0.75);
+        leftLeg.position.x = -0.12;
+        const leftShoe = new THREE.Mesh(new THREE.SphereGeometry(0.12, 16, 16), shoeMat);
+        leftShoe.scale.set(0.9, 0.6, 1.5);
+        leftShoe.position.set(0, -0.55, 0.05);
+        leftLeg.add(leftShoe);
+        player.add(leftLeg);
+
+        const rightLeg = createLimb(0.1, 0.55, pantsMat, 0.75);
+        rightLeg.position.x = 0.12;
+        const rightShoe = new THREE.Mesh(new THREE.SphereGeometry(0.12, 16, 16), shoeMat);
+        rightShoe.scale.set(0.9, 0.6, 1.5);
+        rightShoe.position.set(0, -0.55, 0.05);
+        rightLeg.add(rightShoe);
+        player.add(rightLeg);
+
+        // Backpack
+        const packMesh = new THREE.Mesh(new THREE.SphereGeometry(0.2, 32, 32), new THREE.MeshStandardMaterial({ color: 0x228822 }));
+        packMesh.scale.set(1.2, 1.5, 0.8);
+        packMesh.position.set(0, 1.15, -0.22);
+        packMesh.castShadow = true;
+        player.add(packMesh);
+
+        // Player Jetpack
+        const playerJetpack = new THREE.Group();
+        const jpBody = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.6, 16), new THREE.MeshStandardMaterial({ color: 0x00ccff, metalness: 0.8 }));
+        jpBody.rotation.z = Math.PI / 2;
+        jpBody.castShadow = true;
+        playerJetpack.add(jpBody);
+
+        const nozzleL = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.12, 0.3, 16), new THREE.MeshStandardMaterial({ color: 0x555555 }));
+        nozzleL.position.set(-0.15, -0.3, 0);
+        playerJetpack.add(nozzleL);
+
+        const nozzleR = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.12, 0.3, 16), new THREE.MeshStandardMaterial({ color: 0x555555 }));
+        nozzleR.position.set(0.15, -0.3, 0);
+        playerJetpack.add(nozzleR);
+
+        playerJetpack.position.set(0, 1.2, -0.3);
+        playerJetpack.visible = false;
+        player.add(playerJetpack);
+
+        scene.add(player);
+
+        // --- GAME LOGIC VARIABLES ---
+        let score = 0;
+        let speed = 0.5; // Starting speed
+        const lanes = [-3, 0, 3]; // X coordinates for Left, Center, Right lanes
+        let currentLane = 1; // Start in the middle
+        let isJumping = false;
+        let velocityY = 0;
+        const gravity = -0.02;
+        const jumpStrength = 0.45;
+        let gameOver = false;
+        let runTime = 0; // Controls the pacing of the running animation
+        let coinCount = 0;
+        let jetpackActive = false;
+        let jetpackTimer = 0;
+        let currentLookY = 0;
+        let isSliding = false;
+        let slideTimer = 0;
+
+        // --- OBSTACLES & ITEMS ---
+        const obstacles = [];
+        const items = [];
+
+        const trainMat = new THREE.MeshStandardMaterial({ color: 0xff8800 });
+        const windowMat = new THREE.MeshStandardMaterial({ color: 0x88ccff, roughness: 0.1 });
+        const lightMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff });
+
+        const coinGeo = new THREE.CylinderGeometry(0.3, 0.3, 0.1, 16);
+        coinGeo.rotateX(Math.PI / 2);
+        const coinMat = new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 0.8, roughness: 0.2 });
+        const jetpackGeo = new THREE.BoxGeometry(0.8, 1, 0.4);
+        const jetpackMat = new THREE.MeshStandardMaterial({ color: 0x00ccff, metalness: 0.5 });
+
+        // Overhead Barriers
+        const barrierGeo = new THREE.BoxGeometry(2.6, 0.8, 0.5);
+        const barrierMat = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+        const supportGeo = new THREE.CylinderGeometry(0.1, 0.1, 1.5, 8);
+        const supportMat = new THREE.MeshStandardMaterial({ color: 0x888888 });
+
+        function spawnTrain(laneX, zPos) {
+            const train = new THREE.Group();
+            const trainBody = new THREE.Mesh(new THREE.BoxGeometry(2.6, 3, 14), trainMat);
+            trainBody.position.y = 1.5; trainBody.castShadow = true; train.add(trainBody);
+
+            const win = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.2, 0.1), windowMat);
+            win.position.set(0, 2, 7.05); train.add(win);
+
+            const lightGeo = new THREE.BoxGeometry(0.4, 0.4, 0.1);
+            const lightL = new THREE.Mesh(lightGeo, lightMat); lightL.position.set(-0.8, 1, 7.05); train.add(lightL);
+            const lightR = new THREE.Mesh(lightGeo, lightMat); lightR.position.set(0.8, 1, 7.05); train.add(lightR);
+
+            train.position.set(laneX, 0, zPos);
+            scene.add(train); obstacles.push(train);
+        }
+
+        function spawnBarrier(laneX, zPos) {
+            const barrierGroup = new THREE.Group();
+            const topBar = new THREE.Mesh(barrierGeo, barrierMat);
+            topBar.position.y = 1.9;
+            topBar.castShadow = true;
+            barrierGroup.add(topBar);
+
+            const legL = new THREE.Mesh(supportGeo, supportMat);
+            legL.position.set(-1.2, 0.75, 0);
+            barrierGroup.add(legL);
+
+            const legR = new THREE.Mesh(supportGeo, supportMat);
+            legR.position.set(1.2, 0.75, 0);
+            barrierGroup.add(legR);
+
+            barrierGroup.position.set(laneX, 0, zPos);
+            barrierGroup.isBarrier = true;
+            scene.add(barrierGroup); obstacles.push(barrierGroup);
+        }
+
+        function spawnItem(laneX, yPos, zPos, isJetpack = false) {
+            const mesh = new THREE.Mesh(isJetpack ? jetpackGeo : coinGeo, isJetpack ? jetpackMat : coinMat);
+            mesh.position.set(laneX, yPos, zPos);
+            mesh.castShadow = true;
+            mesh.isJetpack = isJetpack;
+            scene.add(mesh); items.push(mesh);
+        }
+
+        // --- CONTROLS ---
+        window.addEventListener('keydown', (e) => {
+            if (gameOver) return;
+            if (e.key === 'ArrowLeft' && currentLane > 0) currentLane--;
+            if (e.key === 'ArrowRight' && currentLane < 2) currentLane++;
+            if (e.key === 'ArrowUp' && !isJumping && !jetpackActive) {
+                isJumping = true;
+                velocityY = jumpStrength;
+                if (isSliding) {
+                    isSliding = false;
+                    player.scale.y = 1;
+                }
+            }
+            if (e.key === 'ArrowDown' && !jetpackActive) {
+                if (isJumping) {
+                    velocityY -= jumpStrength; // Fast fall
+                } else if (!isSliding) {
+                    isSliding = true;
+                    slideTimer = 40;
+                }
+            }
+        });
+
+        // Resize handler
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // --- GAME LOOP ---
+        let frameCount = 0;
+
+        function animate() {
+            if (gameOver) return;
+            requestAnimationFrame(animate);
+
+            // 1. Move Player smoothly to target lane
+            const targetX = lanes[currentLane];
+            player.position.x += (targetX - player.position.x) * 0.15;
+
+            // 2.5. Animate Child Character
+            if (!isJumping) {
+                runTime += speed * 0.8;
+                const swing = Math.sin(runTime) * 1.2;
+                leftArm.rotation.x = swing;
+                rightArm.rotation.x = -swing;
+                leftLeg.rotation.x = -swing;
+                rightLeg.rotation.x = swing;
+            } else {
+                // Fixed Jumping Pose
+                leftArm.rotation.x = -Math.PI / 4;
+                rightArm.rotation.x = Math.PI / 4;
+                leftLeg.rotation.x = -Math.PI / 6;
+                rightLeg.rotation.x = Math.PI / 6;
+            }
+
+            // Slide Scaling
+            if (isSliding) {
+                slideTimer--;
+                player.scale.y = 0.5;
+                if (slideTimer <= 0) {
+                    isSliding = false;
+                    player.scale.y = 1;
+                }
+            } else {
+                player.scale.y = 1;
+            }
+
+            // 2.8 Update Sleepers (Track movement illusion)
+            sleepers.forEach(s => {
+                s.position.z += speed;
+                if (s.position.z > 10) s.position.z -= 120;
+            });
+
+            // 3. Spawn Trains & Items dynamically
+            const spawnRate = Math.max(30, Math.floor(80 / (speed * 2)));
+            if (frameCount % spawnRate === 0) {
+                const lane = Math.floor(Math.random() * 3);
+
+                if (jetpackActive) {
+                    // Air coins
+                    spawnItem(lanes[lane], 11, -100, false);
+                    spawnItem(lanes[lane], 11, -103, false);
+                    spawnItem(lanes[lane], 11, -106, false);
+                    spawnItem(lanes[lane], 11, -109, false);
+                } else {
+                    const isCoinPattern = Math.random() > 0.5;
+                    const isJetpack = Math.random() > 0.98; // 2% chance per chunk
+                    const isBarrier = Math.random() > 0.85 && !isJetpack && !isCoinPattern;
+
+                    if (isJetpack) {
+                        spawnItem(lanes[lane], 1.5, -100, true);
+                    } else if (isBarrier) {
+                        spawnBarrier(lanes[lane], -100);
+                        spawnItem(lanes[lane], 1, -100, false); // Add a coin under the barrier to reward sliding
+                    } else if (isCoinPattern) {
+                        spawnItem(lanes[lane], 1, -100, false);
+                        spawnItem(lanes[lane], 1, -103, false);
+                        spawnItem(lanes[lane], 1, -106, false);
+                        spawnItem(lanes[lane], 1, -109, false);
+                        const trainLane = (lane + 1 + Math.floor(Math.random() * 2)) % 3;
+                        spawnTrain(lanes[trainLane], -100);
+                    } else {
+                        spawnTrain(lanes[lane], -100);
+                        if (Math.random() > 0.4) {
+                            const trainLane2 = (lane + 1 + Math.floor(Math.random() * 2)) % 3;
+                            spawnTrain(lanes[trainLane2], -100);
+                        }
+                    }
+                }
+            }
+
+            // 4. Update Trains & Check Collisions
+            let crashed = false;
+            let onTrain = false;
+
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                const obs = obstacles[i];
+                obs.position.z += speed;
+
+                if (obs.isBarrier) {
+                    if (obs.position.z > player.position.z - 0.5 && obs.position.z < player.position.z + 0.5) {
+                        if (Math.abs(obs.position.x - player.position.x) < 1.2) {
+                            // Crash if we hit the top bar while standing normally
+                            if (!isSliding && player.position.y < 1.0) {
+                                crashed = true;
+                            }
+                        }
+                    }
+                } else {
+                    // Collision Detection for 14-unit long train
+                    if (obs.position.z > player.position.z - 7.5 && obs.position.z < player.position.z + 7.5) {
+                        if (Math.abs(obs.position.x - player.position.x) < 1.2) {
+                            if (player.position.y >= 3.0) {
+                                onTrain = true;
+                            } else {
+                                crashed = true;
+                            }
+                        }
+                    }
+                }
+
+                if (obs.position.z > 20) { scene.remove(obs); obstacles.splice(i, 1); }
+            }
+
+            const targetGroundY = jetpackActive ? 10 : (onTrain ? 3.2 : 0);
+
+            if (crashed && !jetpackActive) {
+                gameOver = true;
+                document.getElementById('final-score').innerText = 'Score: ' + Math.floor(score);
+                document.getElementById('game-over').style.display = 'block';
+            }
+
+            // 4.1 Handle Y Physics (Jump, Fall, Ascend)
+            if (player.position.y > targetGroundY || isJumping) {
+                player.position.y += velocityY;
+                velocityY += gravity;
+
+                if (player.position.y <= targetGroundY) {
+                    player.position.y = targetGroundY;
+                    isJumping = false;
+                    velocityY = 0;
+                }
+            } else if (player.position.y < targetGroundY) {
+                player.position.y += 0.3; // jetpack ascend speed
+                if (player.position.y >= targetGroundY) {
+                    player.position.y = targetGroundY;
+                }
+            }
+
+            // 4.5 Update Items
+            for (let i = items.length - 1; i >= 0; i--) {
+                const item = items[i];
+                item.position.z += speed;
+                if (!item.isJetpack) item.rotation.y += 0.1;
+                else item.rotation.y += 0.05;
+
+                const dx = item.position.x - player.position.x;
+                const dy = item.position.y - player.position.y;
+                const dz = item.position.z - player.position.z;
+                const distSq = dx * dx + dy * dy + dz * dz;
+
+                if (distSq < 4.0) {
+                    scene.remove(item); items.splice(i, 1);
+                    if (item.isJetpack) {
+                        jetpackActive = true;
+                        jetpackTimer = 3600;
+                        velocityY = 0;
+                        document.getElementById('jetpack-ui').style.display = 'block';
+                        playerJetpack.visible = true;
+                        packMesh.visible = false;
+                    } else {
+                        coinCount++; score += 50;
+                        document.getElementById('coin-score').innerText = 'Coins: ' + coinCount;
+                    }
+                    continue;
+                }
+                if (item.position.z > 15) { scene.remove(item); items.splice(i, 1); }
+            }
+
+            // Jetpack UI update & Camera Tracking
+            if (jetpackActive) {
+                jetpackTimer--;
+                document.getElementById('jetpack-ui').innerText = 'Jetpack: ' + Math.ceil(jetpackTimer / 60) + 's';
+                if (jetpackTimer <= 0) {
+                    jetpackActive = false;
+                    document.getElementById('jetpack-ui').style.display = 'none';
+                    playerJetpack.visible = false;
+                    packMesh.visible = true;
+                }
+            }
+
+            const targetCameraY = jetpackActive ? 15 : 5;
+            camera.position.y += (targetCameraY - camera.position.y) * 0.05;
+            const targetLookY = jetpackActive ? 8 : 0;
+            currentLookY += (targetLookY - currentLookY) * 0.05;
+            camera.lookAt(0, currentLookY, -10);
+
+            // 5. Update Score & Difficulty
+            score += speed * 0.1;
+            speed += 0.00015; // The game continuously gets faster!
+            document.getElementById('score').innerText = 'Score: ' + Math.floor(score);
+
+            renderer.render(scene, camera);
+            frameCount++;
+        }
+
+        // Start game
+        animate();
+    </script>
+</body>
+
+</html>
